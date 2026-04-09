@@ -2,20 +2,20 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createWorker, PSM } from "tesseract.js";
-import { buildZhuyinMap, createAnnotations } from "../lib/zhuyin";
+import { buildZhuyinMap, createAnnotations, prepareImageForOcr } from "../lib/zhuyin";
 
 const FEATURES = [
   {
-    title: "圖片版 MVP",
-    text: "先從上傳圖片開始，確認 OCR 與注音疊圖的體驗是對的。"
+    title: "圖片與相機雙模式",
+    text: "可以上傳截圖，也可以直接開相機取景後按一下辨識。"
   },
   {
-    title: "沿用原字音表",
-    text: "直接使用 Android 版的 word4k.tsv，只標有收錄的中文字。"
+    title: "只標有收錄的字",
+    text: "沿用原本 word4k.tsv，只替字音表中有的中文字顯示注音。"
   },
   {
-    title: "可往即時鏡頭延伸",
-    text: "等圖片版順了，再往手機瀏覽器相機預覽疊字走。"
+    title: "先凍結再辨識",
+    text: "相機模式不是每一幀都跑 OCR，而是先拍下當前畫面再處理，體感更穩。"
   }
 ];
 
@@ -110,16 +110,23 @@ function ResultChip({ item }) {
 export default function HomePage() {
   const workerRef = useRef(null);
   const previewRef = useRef(null);
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+
   const [dictionary, setDictionary] = useState(null);
   const [dictionaryCount, setDictionaryCount] = useState(0);
   const [imageUrl, setImageUrl] = useState("");
+  const [ocrSource, setOcrSource] = useState(null);
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+  const [processedSize, setProcessedSize] = useState({ width: 0, height: 0 });
   const [ocrText, setOcrText] = useState("");
   const [annotations, setAnnotations] = useState([]);
   const [progressText, setProgressText] = useState("等待圖片");
   const [progressValue, setProgressValue] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,12 +136,10 @@ export default function HomePage() {
       const text = await response.text();
       const map = buildZhuyinMap(text);
 
-      if (cancelled) {
-        return;
+      if (!cancelled) {
+        setDictionary(map);
+        setDictionaryCount(map.size);
       }
-
-      setDictionary(map);
-      setDictionaryCount(map.size);
     }
 
     loadDictionary().catch(() => {
@@ -153,6 +158,8 @@ export default function HomePage() {
       if (imageUrl) {
         URL.revokeObjectURL(imageUrl);
       }
+
+      stopCameraStream();
 
       if (workerRef.current) {
         workerRef.current.terminate();
@@ -186,28 +193,122 @@ export default function HomePage() {
     return worker;
   }
 
-  function handleFileChange(event) {
+  function resetRecognition() {
+    setAnnotations([]);
+    setOcrText("");
+    setError("");
+    setProgressValue(0);
+  }
+
+  function stopCameraStream() {
+    if (streamRef.current) {
+      for (const track of streamRef.current.getTracks()) {
+        track.stop();
+      }
+      streamRef.current = null;
+    }
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+
+    setCameraOpen(false);
+    setCameraReady(false);
+  }
+
+  async function applyPreparedImage(prepared) {
+    if (imageUrl) {
+      URL.revokeObjectURL(imageUrl);
+    }
+
+    setImageUrl(prepared.previewUrl);
+    setOcrSource(prepared.canvas);
+    setImageSize(prepared.originalSize);
+    setProcessedSize(prepared.processedSize);
+    resetRecognition();
+    setProgressText("等待辨識");
+  }
+
+  async function handleFileChange(event) {
     const file = event.target.files?.[0];
 
     if (!file) {
       return;
     }
 
-    if (imageUrl) {
-      URL.revokeObjectURL(imageUrl);
+    stopCameraStream();
+    setProgressText("準備圖片");
+
+    try {
+      const prepared = await prepareImageForOcr(file);
+      await applyPreparedImage(prepared);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "圖片準備失敗。");
+      setOcrSource(null);
+      setImageUrl("");
+    }
+  }
+
+  async function startCamera() {
+    try {
+      resetRecognition();
+      setProgressText("開啟相機");
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false
+      });
+
+      streamRef.current = stream;
+      setCameraOpen(true);
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "無法開啟相機。");
+      stopCameraStream();
+    }
+  }
+
+  async function captureCameraFrame() {
+    const video = videoRef.current;
+
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      setError("相機尚未準備好。");
+      return;
     }
 
-    const nextUrl = URL.createObjectURL(file);
-    setImageUrl(nextUrl);
-    setAnnotations([]);
-    setOcrText("");
-    setError("");
-    setProgressText("等待辨識");
-    setProgressValue(0);
+    setProgressText("擷取相機畫面");
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      setError("無法建立相機擷取畫布。");
+      return;
+    }
+
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+
+    if (!blob) {
+      setError("無法擷取相機畫面。");
+      return;
+    }
+
+    const file = new File([blob], "camera-capture.jpg", { type: "image/jpeg" });
+    const prepared = await prepareImageForOcr(file);
+    await applyPreparedImage(prepared);
+    stopCameraStream();
   }
 
   async function handleRecognize() {
-    if (!imageUrl || !dictionary || loading) {
+    if (!ocrSource || !dictionary || loading) {
       return;
     }
 
@@ -218,8 +319,11 @@ export default function HomePage() {
 
     try {
       const worker = await ensureWorker();
-      const result = await worker.recognize(imageUrl, {}, { blocks: true });
-      const words = result?.data?.blocks?.flatMap((block) => block.paragraphs.flatMap((paragraph) => paragraph.lines.flatMap((line) => line.words))) || [];
+      const result = await worker.recognize(ocrSource, {}, { blocks: true });
+      const words =
+        result?.data?.blocks?.flatMap((block) =>
+          block.paragraphs.flatMap((paragraph) => paragraph.lines.flatMap((line) => line.words))
+        ) || [];
       const nextAnnotations = createAnnotations(words, dictionary);
 
       setOcrText((result?.data?.text || "").trim());
@@ -248,12 +352,12 @@ export default function HomePage() {
           <div style={{ display: "grid", gap: 22 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
               <div style={{ maxWidth: 760 }}>
-                <div style={{ fontSize: 12, letterSpacing: 3, color: "#8b7256", marginBottom: 10 }}>READING WITH ZHUYIN / WEB MVP</div>
-                <h1 style={{ margin: 0, fontSize: "clamp(42px, 8vw, 88px)", lineHeight: 0.96 }}>
-                  注音小腦袋
-                </h1>
+                <div style={{ fontSize: 12, letterSpacing: 3, color: "#8b7256", marginBottom: 10 }}>
+                  READING WITH ZHUYIN / CAMERA MVP
+                </div>
+                <h1 style={{ margin: 0, fontSize: "clamp(42px, 8vw, 88px)", lineHeight: 0.96 }}>注音小腦袋</h1>
                 <p style={{ margin: "16px 0 0", fontSize: 18, lineHeight: 1.8, color: "#5f5447" }}>
-                  把 Android 版的「看畫面找中文字，再只替有收錄的字加注音」做成網頁版。這一版先驗證圖片 OCR 與注音疊圖體驗，適合直接上 Vercel demo。
+                  現在可以直接開相機取景，按一下拍下當前畫面後再做 OCR 與注音標示。這比全即時辨識更穩，也更接近實際可用版本。
                 </p>
               </div>
 
@@ -267,9 +371,9 @@ export default function HomePage() {
                   border: "1px solid rgba(76, 52, 28, 0.08)"
                 }}
               >
-                <div style={{ fontWeight: 800, marginBottom: 10 }}>這版做法</div>
+                <div style={{ fontWeight: 800, marginBottom: 10 }}>目前優化</div>
                 <div style={{ color: "#6b6155", lineHeight: 1.8 }}>
-                  OCR 在瀏覽器端跑，Vercel 只負責靜態頁與資源分發，不用先設 API key。
+                  `的` 和 `風` 的常見讀音已修正，圖片在 OCR 前也會先縮到較合理尺寸。
                 </div>
               </div>
             </div>
@@ -333,15 +437,83 @@ export default function HomePage() {
           >
             <div>
               <div style={{ fontSize: 12, letterSpacing: 2, color: "#91775d", marginBottom: 8 }}>STEP 1</div>
-              <div style={{ fontSize: 26, fontWeight: 900 }}>上傳含中文的圖片</div>
+              <div style={{ fontSize: 26, fontWeight: 900 }}>上傳圖片或開啟相機</div>
             </div>
 
             <input type="file" accept="image/*" onChange={handleFileChange} />
 
+            {!cameraOpen ? (
+              <button
+                type="button"
+                onClick={startCamera}
+                style={{
+                  minHeight: 52,
+                  borderRadius: 999,
+                  background: "linear-gradient(135deg, #5b8def, #7bb4ff)",
+                  color: "#10203a",
+                  fontWeight: 900,
+                  cursor: "pointer"
+                }}
+              >
+                開啟相機取景
+              </button>
+            ) : (
+              <>
+                <div
+                  style={{
+                    borderRadius: 24,
+                    overflow: "hidden",
+                    background: "#d9e6ff",
+                    aspectRatio: "3 / 4"
+                  }}
+                >
+                  <video
+                    ref={videoRef}
+                    muted
+                    playsInline
+                    autoPlay
+                    onLoadedMetadata={() => setCameraReady(true)}
+                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={captureCameraFrame}
+                  disabled={!cameraReady}
+                  style={{
+                    minHeight: 52,
+                    borderRadius: 999,
+                    background: cameraReady ? "linear-gradient(135deg, #ff8a3d, #ffb648)" : "#e4d7c3",
+                    color: "#2d2418",
+                    fontWeight: 900,
+                    cursor: cameraReady ? "pointer" : "not-allowed"
+                  }}
+                >
+                  拍下這一張來辨識
+                </button>
+
+                <button
+                  type="button"
+                  onClick={stopCameraStream}
+                  style={{
+                    minHeight: 48,
+                    borderRadius: 999,
+                    background: "rgba(76, 52, 28, 0.08)",
+                    color: "#5f5447",
+                    fontWeight: 800,
+                    cursor: "pointer"
+                  }}
+                >
+                  關閉相機
+                </button>
+              </>
+            )}
+
             <button
               type="button"
               onClick={handleRecognize}
-              disabled={!imageUrl || !dictionary || loading}
+              disabled={!ocrSource || !dictionary || loading}
               style={{
                 minHeight: 52,
                 borderRadius: 999,
@@ -377,8 +549,14 @@ export default function HomePage() {
             </div>
 
             <div style={{ color: "#6f6458", lineHeight: 1.8 }}>
-              建議先用清楚、字夠大的截圖測試。這一版走圖片上傳，所以最適合先驗證產品核心。
+              相機模式是先凍結一張畫面再 OCR，所以通常會比全即時辨識更順、更省電。
             </div>
+
+            {!!processedSize.width && (
+              <div style={{ color: "#6f6458", lineHeight: 1.8 }}>
+                OCR 尺寸：{processedSize.width} x {processedSize.height}
+              </div>
+            )}
           </div>
 
           <div
@@ -398,7 +576,7 @@ export default function HomePage() {
                 <div style={{ fontSize: 26, fontWeight: 900 }}>圖片疊注音預覽</div>
               </div>
               <div style={{ maxWidth: 320, color: "#6f6458", lineHeight: 1.7 }}>
-                只會替字音表裡有收錄的中文字加框和注音，這跟 Android 原版邏輯一致。
+                先拍下畫面再標注，這樣結果更穩，也比較容易對照你正在看的內容。
               </div>
             </div>
 
@@ -413,17 +591,7 @@ export default function HomePage() {
                   background: "#f4ead6"
                 }}
               >
-                <img
-                  src={imageUrl}
-                  alt="Uploaded preview"
-                  style={{ width: "100%", display: "block" }}
-                  onLoad={(event) => {
-                    setImageSize({
-                      width: event.currentTarget.naturalWidth,
-                      height: event.currentTarget.naturalHeight
-                    });
-                  }}
-                />
+                <img src={imageUrl} alt="Captured preview" style={{ width: "100%", display: "block" }} />
                 {annotations.map((item, index) => (
                   <OverlayAnnotation
                     key={`${item.character}-${index}`}
@@ -444,7 +612,7 @@ export default function HomePage() {
                   color: "#776a5c"
                 }}
               >
-                上傳圖片後，這裡會顯示注音疊圖結果。
+                上傳圖片或從相機拍下一張後，這裡會顯示注音疊圖結果。
               </div>
             )}
           </div>
@@ -479,7 +647,7 @@ export default function HomePage() {
               <div style={{ fontSize: 28, fontWeight: 900 }}>辨識到的文字</div>
             </div>
             <div style={{ maxWidth: 360, color: "#786a58", lineHeight: 1.7 }}>
-              這區讓我們判斷 OCR 是否準，再決定要不要往即時相機版繼續推。
+              這區可以幫我們分辨是 OCR 本身辨錯，還是注音選音邏輯還要再調。
             </div>
           </div>
 
