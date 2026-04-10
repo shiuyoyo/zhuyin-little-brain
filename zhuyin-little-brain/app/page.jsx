@@ -167,6 +167,26 @@ export default function HomePage() {
     };
   }, [imageUrl]);
 
+  useEffect(() => {
+    async function attachStream() {
+      if (!cameraOpen || !videoRef.current || !streamRef.current) {
+        return;
+      }
+
+      if (videoRef.current.srcObject !== streamRef.current) {
+        videoRef.current.srcObject = streamRef.current;
+      }
+
+      try {
+        await videoRef.current.play();
+      } catch (error) {
+        setError(error instanceof Error ? error.message : "相機預覽啟動失敗。");
+      }
+    }
+
+    attachStream();
+  }, [cameraOpen]);
+
   async function ensureWorker() {
     if (workerRef.current) {
       return workerRef.current;
@@ -260,11 +280,6 @@ export default function HomePage() {
 
       streamRef.current = stream;
       setCameraOpen(true);
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "無法開啟相機。");
       stopCameraStream();
