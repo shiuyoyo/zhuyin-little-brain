@@ -54,6 +54,18 @@ a {
   min-width: 0;
 }
 
+.preview-scroll {
+  overflow: auto;
+  border-radius: 24px;
+  background: #f4ead6;
+  -webkit-overflow-scrolling: touch;
+}
+
+.preview-stage {
+  position: relative;
+  min-width: 100%;
+}
+
 @media (max-width: 900px) {
   .step-layout {
     grid-template-columns: minmax(0, 1fr);

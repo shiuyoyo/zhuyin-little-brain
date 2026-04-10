@@ -11,11 +11,11 @@ const FEATURES = [
   },
   {
     title: "只標有收錄的字",
-    text: "沿用原本 word4k.tsv，只替字音表中有的中文字顯示注音。"
+    text: "沿用原本的 word4k.tsv，只替字音表中有的中文字顯示注音。"
   },
   {
-    title: "先凍結再辨識",
-    text: "相機模式不是每一幀都跑 OCR，而是先拍下當前畫面再處理，體感更穩。"
+    title: "手機可放大預覽",
+    text: "手機上可以放大圖片區，讓注音標籤不要全部擠在一起。"
   }
 ];
 
@@ -51,6 +51,7 @@ function OverlayAnnotation({ item, imageSize, containerRef }) {
   const width = Math.max((rect.x1 - rect.x0) * scaleX, 22);
   const height = Math.max((rect.y1 - rect.y0) * scaleY, 22);
   const fontSize = Math.max(Math.min(width * 0.38, 18), 11);
+  const showBelow = top < 36;
 
   return (
     <div
@@ -71,8 +72,9 @@ function OverlayAnnotation({ item, imageSize, containerRef }) {
         style={{
           position: "absolute",
           left: "50%",
-          bottom: "100%",
-          transform: "translate(-50%, -6px)",
+          top: showBelow ? "100%" : "auto",
+          bottom: showBelow ? "auto" : "100%",
+          transform: showBelow ? "translate(-50%, 6px)" : "translate(-50%, -6px)",
           padding: "4px 8px",
           borderRadius: 999,
           background: "rgba(45, 36, 24, 0.88)",
@@ -127,6 +129,13 @@ export default function HomePage() {
   const [error, setError] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
+  const [previewZoom, setPreviewZoom] = useState(1);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.innerWidth <= 640) {
+      setPreviewZoom(1.8);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -179,8 +188,8 @@ export default function HomePage() {
 
       try {
         await videoRef.current.play();
-      } catch (error) {
-        setError(error instanceof Error ? error.message : "相機預覽啟動失敗。");
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "相機預覽啟動失敗。");
       }
     }
 
@@ -220,6 +229,10 @@ export default function HomePage() {
     setProgressValue(0);
   }
 
+  function defaultZoom() {
+    return typeof window !== "undefined" && window.innerWidth <= 640 ? 1.8 : 1;
+  }
+
   function stopCameraStream() {
     if (streamRef.current) {
       for (const track of streamRef.current.getTracks()) {
@@ -247,6 +260,7 @@ export default function HomePage() {
     setProcessedSize(prepared.processedSize);
     resetRecognition();
     setProgressText("等待辨識");
+    setPreviewZoom(defaultZoom());
   }
 
   async function handleFileChange(event) {
@@ -372,7 +386,7 @@ export default function HomePage() {
                 </div>
                 <h1 style={{ margin: 0, fontSize: "clamp(42px, 8vw, 88px)", lineHeight: 0.96 }}>注音小腦袋</h1>
                 <p style={{ margin: "16px 0 0", fontSize: 18, lineHeight: 1.8, color: "#5f5447" }}>
-                  現在可以直接開相機取景，按一下拍下當前畫面後再做 OCR 與注音標示。這比全即時辨識更穩，也更接近實際可用版本。
+                  可以上傳圖片，也可以直接開相機拍下一張再辨識。手機上我另外加了放大預覽，讓注音標籤不要全部擠在一起。
                 </p>
               </div>
 
@@ -386,9 +400,9 @@ export default function HomePage() {
                   border: "1px solid rgba(76, 52, 28, 0.08)"
                 }}
               >
-                <div style={{ fontWeight: 800, marginBottom: 10 }}>目前優化</div>
+                <div style={{ fontWeight: 800, marginBottom: 10 }}>目前狀態</div>
                 <div style={{ color: "#6b6155", lineHeight: 1.8 }}>
-                  `的` 和 `風` 的常見讀音已修正，圖片在 OCR 前也會先縮到較合理尺寸。
+                  `的` 和 `風` 已用常見讀音，iPhone 相機預覽也已經修好。
                 </div>
               </div>
             </div>
@@ -559,7 +573,7 @@ export default function HomePage() {
             </div>
 
             <div style={{ color: "#6f6458", lineHeight: 1.8 }}>
-              相機模式是先凍結一張畫面再 OCR，所以通常會比全即時辨識更順、更省電。
+              相機模式是先拍下一張再跑 OCR，所以比全即時辨識更穩，也比較省電。
             </div>
 
             {!!processedSize.width && (
@@ -586,31 +600,81 @@ export default function HomePage() {
                 <div style={{ fontSize: 12, letterSpacing: 2, color: "#91775d", marginBottom: 8 }}>STEP 2</div>
                 <div style={{ fontSize: 26, fontWeight: 900 }}>圖片疊注音預覽</div>
               </div>
-              <div style={{ maxWidth: 320, color: "#6f6458", lineHeight: 1.7 }}>
-                先拍下畫面再標注，這樣結果更穩，也比較容易對照你正在看的內容。
+              <div style={{ display: "grid", gap: 10, justifyItems: "end" }}>
+                <div style={{ maxWidth: 320, color: "#6f6458", lineHeight: 1.7 }}>
+                  手機上可以放大這個預覽區，讓注音標籤像桌面版一樣比較分開，不會全部蓋在一起。
+                </div>
+                {imageUrl ? (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewZoom((value) => Math.max(1, Number((value - 0.3).toFixed(1))))}
+                      style={{
+                        minWidth: 44,
+                        minHeight: 40,
+                        borderRadius: 999,
+                        background: "rgba(76, 52, 28, 0.08)",
+                        color: "#5f5447",
+                        fontWeight: 900,
+                        cursor: "pointer"
+                      }}
+                    >
+                      -
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewZoom(defaultZoom())}
+                      style={{
+                        minHeight: 40,
+                        padding: "0 14px",
+                        borderRadius: 999,
+                        background: "rgba(76, 52, 28, 0.08)",
+                        color: "#5f5447",
+                        fontWeight: 800,
+                        cursor: "pointer"
+                      }}
+                    >
+                      {previewZoom.toFixed(1)}x
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewZoom((value) => Math.min(3, Number((value + 0.3).toFixed(1))))}
+                      style={{
+                        minWidth: 44,
+                        minHeight: 40,
+                        borderRadius: 999,
+                        background: "linear-gradient(135deg, #ff8a3d, #ffb648)",
+                        color: "#2d2418",
+                        fontWeight: 900,
+                        cursor: "pointer"
+                      }}
+                    >
+                      +
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </div>
 
             {imageUrl ? (
-              <div
-                ref={previewRef}
-                style={{
-                  position: "relative",
-                  width: "100%",
-                  borderRadius: 24,
-                  overflow: "hidden",
-                  background: "#f4ead6"
-                }}
-              >
-                <img src={imageUrl} alt="Captured preview" style={{ width: "100%", display: "block" }} />
-                {annotations.map((item, index) => (
-                  <OverlayAnnotation
-                    key={`${item.character}-${index}`}
-                    item={item}
-                    imageSize={imageSize}
-                    containerRef={previewRef}
-                  />
-                ))}
+              <div className="preview-scroll">
+                <div
+                  ref={previewRef}
+                  className="preview-stage"
+                  style={{
+                    width: `${previewZoom * 100}%`
+                  }}
+                >
+                  <img src={imageUrl} alt="Captured preview" style={{ width: "100%", display: "block" }} />
+                  {annotations.map((item, index) => (
+                    <OverlayAnnotation
+                      key={`${item.character}-${index}`}
+                      item={item}
+                      imageSize={imageSize}
+                      containerRef={previewRef}
+                    />
+                  ))}
+                </div>
               </div>
             ) : (
               <div
@@ -658,7 +722,7 @@ export default function HomePage() {
               <div style={{ fontSize: 28, fontWeight: 900 }}>辨識到的文字</div>
             </div>
             <div style={{ maxWidth: 360, color: "#786a58", lineHeight: 1.7 }}>
-              這區可以幫我們分辨是 OCR 本身辨錯，還是注音選音邏輯還要再調。
+              這區可以幫我們判斷是 OCR 本身辨錯，還是注音選音邏輯還要再調。
             </div>
           </div>
 
