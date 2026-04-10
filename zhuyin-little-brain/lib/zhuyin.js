@@ -101,22 +101,22 @@ export async function prepareImageForOcr(file) {
 
   try {
     const image = await loadImage(previewUrl);
-    const maxDimension = 1600;
-    const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
-    const width = Math.max(Math.round(image.naturalWidth * scale), 1);
-    const height = Math.max(Math.round(image.naturalHeight * scale), 1);
+    const { width, height } = getOcrDimensions(image.naturalWidth, image.naturalHeight);
     const canvas = document.createElement("canvas");
 
     canvas.width = width;
     canvas.height = height;
 
-    const context = canvas.getContext("2d");
+    const context = canvas.getContext("2d", { willReadFrequently: true });
 
     if (!context) {
       throw new Error("無法建立圖片處理畫布。");
     }
 
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
     context.drawImage(image, 0, 0, width, height);
+    enhanceForOcr(context, width, height);
 
     return {
       canvas,
@@ -134,6 +134,43 @@ export async function prepareImageForOcr(file) {
     URL.revokeObjectURL(previewUrl);
     throw error;
   }
+}
+
+function getOcrDimensions(originalWidth, originalHeight) {
+  const shortEdge = Math.min(originalWidth, originalHeight);
+  const longEdge = Math.max(originalWidth, originalHeight);
+  const targetShortEdge = 1200;
+  const maxLongEdge = 2400;
+
+  const upscale = targetShortEdge / shortEdge;
+  const downscale = maxLongEdge / longEdge;
+  const scale = Math.min(Math.max(upscale, 1), Math.max(downscale, 1));
+
+  return {
+    width: Math.max(Math.round(originalWidth * scale), 1),
+    height: Math.max(Math.round(originalHeight * scale), 1)
+  };
+}
+
+function enhanceForOcr(context, width, height) {
+  const imageData = context.getImageData(0, 0, width, height);
+  const { data } = imageData;
+  const contrast = 1.28;
+
+  for (let index = 0; index < data.length; index += 4) {
+    const luminance = data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114;
+    const contrasted = clamp((luminance - 128) * contrast + 128);
+
+    data[index] = contrasted;
+    data[index + 1] = contrasted;
+    data[index + 2] = contrasted;
+  }
+
+  context.putImageData(imageData, 0, 0);
+}
+
+function clamp(value) {
+  return Math.max(0, Math.min(255, Math.round(value)));
 }
 
 function loadImage(src) {

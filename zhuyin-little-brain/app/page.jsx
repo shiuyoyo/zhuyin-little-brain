@@ -215,7 +215,8 @@ export default function HomePage() {
 
     await worker.setParameters({
       tessedit_pageseg_mode: PSM.SPARSE_TEXT,
-      preserve_interword_spaces: "1"
+      preserve_interword_spaces: "1",
+      user_defined_dpi: "300"
     });
 
     workerRef.current = worker;
