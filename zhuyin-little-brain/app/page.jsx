@@ -416,14 +416,9 @@ export default function HomePage() {
           ))}
         </section>
 
-        <section
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 360px) minmax(0, 1fr)",
-            gap: 22
-          }}
-        >
+        <section className="step-layout">
           <div
+            className="step-panel"
             style={{
               padding: 22,
               borderRadius: 30,
@@ -560,6 +555,7 @@ export default function HomePage() {
           </div>
 
           <div
+            className="step-panel"
             style={{
               padding: 22,
               borderRadius: 30,

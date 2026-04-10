@@ -43,3 +43,19 @@ a {
   color: inherit;
   text-decoration: none;
 }
+
+.step-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 360px) minmax(0, 1fr);
+  gap: 22px;
+}
+
+.step-panel {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .step-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
